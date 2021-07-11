@@ -3,30 +3,35 @@
 namespace App\Http\Controllers;
 
 use App\Http\Resources\CashResource;
+use App\Models\Cash;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 class CashController extends Controller
 {
     public function index()
     {
-        $debit = Auth::user()
-        ->cashes()
-        ->whereBetween('when', [now()->firstOfMonth(), now()])
-        ->where('amount', '>=', 0)
-        ->get('amount')->sum('amount');
-        $credit = Auth::user()
-        ->cashes()
-        ->whereBetween('when', [now()->firstOfMonth(), now()])
-        ->where('amount', '<', 0)
-        ->get('amount')->sum('amount');
-        $balances = $debit + $credit;
-        $transactions = Auth::user()->cashes()->whereBetween('when', [now()->firstOfMonth(), now()])->latest()->get();
+        $from = request('from');
+        $to = request('to');
+
+        if ($from && $to) {
+            $debit =  $this->getBalances($from, $to, ">=");
+            $credit =  $this->getBalances($from, $to, "<");
+            $transactions = Auth::user()->cashes()->whereBetween('when', [$from, $to])->latest()->get();
+        } else {
+            $debit =  $this->getBalances(now()->firstOfMonth(), now(), ">=");
+            $credit =  $this->getBalances(now()->firstOfMonth(), now(), "<");
+            $transactions = Auth::user()->cashes()->whereBetween('when', [now()->firstOfMonth(), now()])->latest()->get();
+        }
+        
         return response()->json([
-            'balances' => formatPrice($balances), 
+            'balances' => formatPrice(Auth::user()->cashes()->get('amount')->sum('amount')), 
             'debit' => formatPrice($debit),
             'credit' => formatPrice($credit),
             'transactions' => CashResource::collection($transactions),
+            'now' => now()->format("Y-m-d"),
+            'firstOfMonth' => now()->firstOfMonth()->format("Y-m-d"),
         ]);
+
     }
     public function store()
     {
@@ -37,7 +42,7 @@ class CashController extends Controller
 
         $slug = request('name')."-".Str::random(6);
         $when = request('when') ?? now();
-        Auth::user()->cashes()->create([
+        $cash = Auth::user()->cashes()->create([
             'name' => request('name'),
             'slug' => Str::slug($slug),
             'when' => $when,
@@ -47,9 +52,25 @@ class CashController extends Controller
         ]);
 
         return response()->json([
-            'message' => 'The transaction has been saved.'
+            'message' => 'The transaction has been saved.',
+            'cash' => new CashResource($cash)
         ]);
 
 
+    }
+    public function show(Cash $cash)
+    {
+        abort(403);
+        $this->authorize('show', $cash);
+        return new CashResource($cash);
+    }
+
+    public function getBalances($from, $to, $operator)
+    {
+        return Auth::user()->cashes()
+                            ->whereBetween('when', [$from, $to])
+                            ->where('amount', $operator , 0)
+                            ->get('amount')
+                            ->sum('amount');
     }
 }
